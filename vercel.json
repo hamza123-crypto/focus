@@ -1,10 +1,10 @@
 {
-  "version": 3,
+  "version": 2,
   "builds": [
     {
       "src": "server/index-dev.ts",
       "use": "@vercel/node",
-      "config": { "runtime": "nodejs20.x" }
+      "config": { "maxLambdaSize": "50mb" }
     },
     {
       "src": "client/**/*",
