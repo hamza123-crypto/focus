@@ -9,22 +9,25 @@ import { createServer as createViteServer, createLogger } from "vite";
 import viteConfig from "../vite.config";
 import runApp from "./app";
 
+// إصلاح __dirname في Node.js
+import { fileURLToPath } from "url";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
 export async function setupVite(app: Express, server: Server) {
   const viteLogger = createLogger();
-  
-  // Configure HMR for Replit environment
+
+  // إعداد HMR
   const hmrConfig: any = { server };
-  
-  // In production or when behind a proxy (like Replit), provide explicit host/port
+
+  // إذا بيئة Replit
   if (process.env.REPL_ID) {
-    // Replit environment - use the current host without explicit port
-    const host = process.env.REPL_SLUG 
+    const host = process.env.REPL_SLUG
       ? `${process.env.REPL_SLUG}.${process.env.REPL_OWNER}.repl.co`
       : undefined;
-    
+
     if (host) {
       hmrConfig.host = host;
-      hmrConfig.protocol = 'wss';
+      hmrConfig.protocol = "wss";
       hmrConfig.port = 443;
     }
   }
@@ -35,47 +38,62 @@ export async function setupVite(app: Express, server: Server) {
     allowedHosts: true as const,
   };
 
-  const vite = await createViteServer({
-    ...viteConfig,
-    configFile: false,
-    customLogger: {
-      ...viteLogger,
-      error: (msg, options) => {
-        viteLogger.error(msg, options);
-        process.exit(1);
+  try {
+    const vite = await createViteServer({
+      ...viteConfig,
+      configFile: false,
+      customLogger: {
+        ...viteLogger,
+        error: (msg, options) => {
+          viteLogger.error(msg, options);
+          // لا تستخدم process.exit() في serverless
+        },
       },
-    },
-    server: serverOptions,
-    appType: "custom",
-  });
+      server: serverOptions,
+      appType: "custom",
+    });
 
-  app.use(vite.middlewares);
-  app.use("*", async (req, res, next) => {
-    const url = req.originalUrl;
+    app.use(vite.middlewares);
 
-    try {
-      const clientTemplate = path.resolve(
-        import.meta.dirname,
-        "..",
-        "client",
-        "index.html",
-      );
+    app.use("*", async (req, res, next) => {
+      const url = req.originalUrl;
 
-      // always reload the index.html file from disk incase it changes
-      let template = await fs.promises.readFile(clientTemplate, "utf-8");
-      template = template.replace(
-        `src="/src/main.tsx"`,
-        `src="/src/main.tsx?v=${nanoid()}"`,
-      );
-      const page = await vite.transformIndexHtml(url, template);
-      res.status(200).set({ "Content-Type": "text/html" }).end(page);
-    } catch (e) {
-      vite.ssrFixStacktrace(e as Error);
-      next(e);
-    }
-  });
+      try {
+        const clientTemplate = path.resolve(
+          __dirname,
+          "..",
+          "client",
+          "index.html"
+        );
+
+        // اقرأ الملف من القرص دائماً
+        let template = await fs.promises.readFile(clientTemplate, "utf-8");
+
+        // أضف query string لتجنب cache
+        template = template.replace(
+          `src="/src/main.tsx"`,
+          `src="/src/main.tsx?v=${nanoid()}"`
+        );
+
+        const page = await vite.transformIndexHtml(url, template);
+        res.status(200).set({ "Content-Type": "text/html" }).end(page);
+      } catch (e) {
+        vite.ssrFixStacktrace(e as Error);
+        console.error("Error rendering page:", e);
+        res.status(500).send("Internal Server Error");
+      }
+    });
+  } catch (err) {
+    console.error("Vite server setup failed:", err);
+    throw err; // إذا setup فشل، أترك الخطأ ليتم التعامل معه في runApp
+  }
 }
 
+// تشغيل التطبيق
 (async () => {
-  await runApp(setupVite);
+  try {
+    await runApp(setupVite);
+  } catch (err) {
+    console.error("App failed to start:", err);
+  }
 })();
